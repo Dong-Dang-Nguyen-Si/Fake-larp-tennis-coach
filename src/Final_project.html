@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Digital Twin: Tennis Dynamics & Robotics</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { margin: 0; overflow: hidden; background: #090d16; font-family: 'Inter', system-ui, sans-serif; color: #f3f4f6; user-select: none; }
+    
+    /* Viewport Camera Boxes */
+    .cam-viewport { position: relative; width: 260px; height: 195px; background: #000; border: 1.5px solid #374151; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5); }
+    .yolo-bbox { position: absolute; border: 2px solid #22c55e; background: rgba(34, 197, 94, 0.12); pointer-events: none; display: none; transform: translate(-50%, -50%); }
+    .yolo-tag { position: absolute; top: -18px; left: -2px; background: #22c55e; color: #000; font-size: 10px; font-weight: 800; padding: 1px 4px; border-radius: 2px; }
+
+    /* HUD Panels */
+    .math-hud {
+      background: linear-gradient(135deg, rgba(15,23,42,0.92) 0%, rgba(9,9,11,0.95) 100%);
+      border: 1px solid rgba(56, 189, 248, 0.4);
+      box-shadow: 0 0 30px rgba(14, 165, 233, 0.2);
+      backdrop-filter: blur(8px);
+      width: 480px; 
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .math-hud::-webkit-scrollbar { width: 6px; }
+    .math-hud::-webkit-scrollbar-track { background: transparent; }
+    .math-hud::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.3); border-radius: 3px; }
+    
+    /* Toggle Switch */
+    .switch-mode { display: flex; background: #1e293b; border-radius: 8px; padding: 4px; gap: 4px; }
+    .switch-mode button { flex: 1; padding: 6px 4px; font-size: 10px; font-weight: 700; border-radius: 6px; transition: 0.2s; text-align: center; }
+    .switch-active { background: #3b82f6; color: white; box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4); }
+    .switch-inactive { color: #94a3b8; background: transparent; }
+    .switch-inactive:hover { color: #cbd5e1; background: rgba(255,255,255,0.05); }
+
+    .data-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; text-align: center; font-family: monospace; font-size: 10px; }
+    .data-cell { background: rgba(0,0,0,0.5); padding: 4px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); }
+  </style>
+
+  <!-- MathJax Configuration -->
+  <script>
+    window.MathJax = {
+      tex: { inlineMath: [['\(', '\)']], displayMath: [['\[', '\]']], processEscapes: true },
+      svg: { fontCache: 'global' }
+    };
+  </script>
+  <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <!-- MAIN CONTROL PANEL (Left) -->
+  <div class="absolute top-4 left-4 z-20 w-[350px] bg-slate-900/90 backdrop-blur-md p-4 rounded-xl border border-slate-700/60 shadow-2xl">
+    <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-blue-500 animate-pulse"></span>
+        <h2 class="font-bold text-sm tracking-wide text-white uppercase">AI & Robotics System</h2>
+      </div>
+    </div>
+
+    <!-- Toggle 3 Modes -->
+    <div class="mt-3 switch-mode">
+      <button id="btn-mode-legacy" class="switch-active">Simulation (Test)</button>
+      <button id="btn-mode-real" class="switch-inactive">Real Match (YOLO)</button>
+      <button id="btn-mode-robot" class="switch-inactive">Robot Match</button>
+    </div>
+
+    <div class="mt-3 space-y-2 text-xs font-mono">
+      <div class="flex justify-between items-center bg-slate-800/60 p-2 rounded border border-slate-700/40">
+        <span class="text-slate-400">Ball Velocity:</span>
+        <div class="text-right"><span id="speed-val" class="text-amber-400 font-bold text-sm">0.0</span> <span class="text-slate-400">m/s</span></div>
+      </div>
+      <div class="bg-slate-800/60 p-2 rounded border border-slate-700/40">
+        <div class="text-slate-400 mb-1">3D Coordinates (m):</div>
+        <div class="grid grid-cols-3 gap-1 text-center font-bold">
+          <div class="bg-rose-500/10 text-rose-400 rounded py-0.5 border border-rose-500/30">X: <span id="pos-x">0.00</span></div>
+          <div class="bg-emerald-500/10 text-emerald-400 rounded py-0.5 border border-emerald-500/30">Y: <span id="pos-y">0.00</span></div>
+          <div class="bg-blue-500/10 text-blue-400 rounded py-0.5 border border-blue-500/30">Z: <span id="pos-z">0.00</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-3 space-y-2">
+      <button id="toggle-fly" class="w-full py-2 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg text-xs transition duration-150 shadow-lg">
+        Toggle Auto-Fly Mode
+      </button>
+      <button id="toggle-math-hud" class="w-full py-2 px-3 bg-sky-600 hover:bg-sky-500 text-white font-semibold rounded-lg text-xs transition duration-150 shadow-lg hidden">
+        Ball Dynamics Analysis
+      </button>
+      <button id="toggle-robot-hud" class="w-full py-2 px-3 bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-semibold rounded-lg text-xs transition duration-150 shadow-lg hidden">
+        Robot Lie Group Analysis
+      </button>
+      <div class="grid grid-cols-2 gap-2">
+        <button id="toggle-grid" class="py-1.5 bg-slate-800 text-cyan-300 rounded-lg text-xs border border-cyan-500/30">Toggle Grid</button>
+        <button id="clear-marks" class="py-1.5 bg-slate-800 text-slate-300 rounded-lg text-xs border border-slate-700">Clear Impact Marks</button>
+      </div>
+    </div>
+    
+    <div id="instruction-text" class="mt-3 text-[11px] text-slate-400 leading-relaxed border-t border-slate-800 pt-2">
+      💡 <b>Test Mode</b>: Drag and drop the ball to observe coordinates and PTV axes. (Press SPACE to reset).
+    </div>
+  </div>
+
+  <!-- YOLO SENSOR BACKEND -->
+  <div id="yolo-sensor-ui" class="hidden absolute bottom-4 left-4 z-20 bg-slate-900/90 backdrop-blur-md p-2 rounded-xl border border-slate-700 shadow-2xl">
+    <div class="flex justify-between items-center mb-1">
+      <div class="text-[10px] text-emerald-400 font-mono font-bold">YOLO SENSOR (Live)</div>
+      <div id="sensor-indicator" class="w-2 h-2 rounded-full bg-rose-600"></div>
+    </div>
+    <img id="live-cam-feed" src="http://localhost:5000/video_feed" class="w-56 h-40 object-cover border border-slate-700 rounded bg-black" alt="Waiting for backend camera...">
+    <div class="mt-2 text-[11px] font-mono text-slate-300">
+      Status: <span id="throw-status" class="text-amber-400">Waiting for input...</span>
+    </div>
+  </div>
+
+  <!-- BALL DYNAMICS HUD (Real Match) -->
+  <div id="math-hud-panel" class="math-hud hidden absolute top-4 right-[290px] z-30 p-5 rounded-xl">
+    <div class="flex items-center gap-3 border-b border-sky-900/60 pb-3 mb-4">
+      <div class="p-1.5 bg-sky-500/20 rounded-lg"><svg class="w-5 h-5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg></div>
+      <h3 class="text-base font-bold text-white tracking-wide">Ball Trajectory Dynamics</h3>
+    </div>
+    <div class="space-y-5 text-xs text-slate-300">
+      <div>
+        <div class="font-semibold text-sky-300 mb-2 uppercase text-[10px] tracking-wider">I. Differential Equations of Motion</div>
+        <div class="bg-black/40 p-3 rounded-lg border border-slate-800 shadow-inner">
+          <div class="text-center text-sm mb-2 text-white">\( m rac{dec{v}}{dt} = mec{g} + ec{F}_{drag} + ec{F}_{Magnus} \)</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-semibold text-sky-300 mb-2 uppercase text-[10px] tracking-wider">II. Spin Dynamics (Magnus Force)</div>
+        <div class="bg-black/40 p-3 rounded-lg border border-slate-800 shadow-inner">
+          <div class="text-center mb-2 text-xs">\( ec{F}_{Magnus} = rac{1}{2} C_L ho A r \left( rac{ec{\omega} 	imes ec{v}}{|ec{v}|} ight) \)</div>
+          <div class="flex justify-between items-center mt-3 bg-slate-900/80 p-2 rounded border border-slate-700/50">
+            <span class="text-slate-400">Spin Vector \( ec{\omega} \)</span>
+            <span id="math-spin-val" class="text-rose-400 font-mono font-bold text-sm">0.0 rad/s</span>
+          </div>
+          <div class="text-[10px] text-emerald-400 mt-2 font-medium bg-emerald-500/10 px-2 py-1 rounded inline-block" id="spin-type">Status: Waiting for throw...</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-semibold text-sky-300 mb-2 uppercase text-[10px] tracking-wider">III. Runge-Kutta (RK4) Impact Prediction</div>
+        <div class="bg-black/40 p-3 rounded-lg border border-slate-800 shadow-inner grid grid-cols-2 gap-3">
+          <div class="bg-slate-900 p-2 rounded-md text-center border border-emerald-900/50">
+            <div class="text-[10px] text-slate-500 mb-1">X_impact</div>
+            <div class="text-emerald-400 font-mono text-sm font-bold"><span id="math-impact-x">--</span> m</div>
+          </div>
+          <div class="bg-slate-900 p-2 rounded-md text-center border border-emerald-900/50">
+            <div class="text-[10px] text-slate-500 mb-1">Z_impact</div>
+            <div class="text-emerald-400 font-mono text-sm font-bold"><span id="math-impact-z">--</span> m</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROBOTICS HUD (Robot Match) -->
+  <div id="robot-hud-panel" class="math-hud hidden absolute top-4 right-[290px] z-30 p-5 rounded-xl border-fuchsia-500/40 shadow-[0_0_30px_rgba(217,70,239,0.15)]">
+    <div class="flex items-center gap-3 border-b border-fuchsia-900/60 pb-3 mb-4">
+      <div class="p-1.5 bg-fuchsia-500/20 rounded-lg"><svg class="w-5 h-5 text-fuchsia-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg></div>
+      <h3 class="text-base font-bold text-white tracking-wide">6-DOF Robot Kinematics (Lie Group)</h3>
+    </div>
+    
+    <div class="space-y-4 text-xs text-slate-300">
+      <div>
+        <div class="font-semibold text-fuchsia-300 mb-2 uppercase text-[10px] tracking-wider">I. Forward Kinematics (Product of Exponentials)</div>
+        <div class="bg-black/40 p-2 rounded-lg border border-slate-800 shadow-inner">
+          <div class="text-center text-sm mb-1 text-white">\( T(	heta) = e^{[\mathcal{S}_1]	heta_1} e^{[\mathcal{S}_2]	heta_2} \dots e^{[\mathcal{S}_6]	heta_6} M \)</div>
+        </div>
+      </div>
+      <div>
+        <div class="font-semibold text-fuchsia-300 mb-2 uppercase text-[10px] tracking-wider">II. Inverse Dynamics (Euler-Lagrange)</div>
+        <div class="bg-black/40 p-2 rounded-lg border border-slate-800 shadow-inner">
+          <div class="text-center text-sm mb-1 text-white">\( M(	heta)\ddot{	heta} + C(	heta, \dot{	heta})\dot{	heta} + g(	heta) = 	au_{ext} \)</div>
+          <div class="text-[9px] text-slate-400 mt-1 text-center">Includes Coriolis matrix \( C \) for hip/back force transfer.</div>
+        </div>
+      </div>
+      
+      <!-- Telemetry Data -->
+      <div>
+        <div class="font-semibold text-fuchsia-300 mb-2 uppercase text-[10px] tracking-wider">III. Live Telemetry Data</div>
+        <div class="grid grid-cols-2 gap-3">
+          <div class="bg-slate-900/80 p-2 rounded border border-slate-700/50">
+            <div class="text-[9px] text-slate-400 mb-1 text-center border-b border-slate-700 pb-1">Joint Angles \(	heta\) (rad)</div>
+            <div class="data-grid text-fuchsia-400">
+              <div class="data-cell">J1(Base):<br><span id="th1">0.00</span></div>
+              <div class="data-cell">J2(Shou):<br><span id="th2">0.00</span></div>
+              <div class="data-cell">J3(Elbo):<br><span id="th3">0.00</span></div>
+              <div class="data-cell">J4(Roll):<br><span id="th4">0.00</span></div>
+              <div class="data-cell">J5(Pitc):<br><span id="th5">0.00</span></div>
+              <div class="data-cell">J6(Rack):<br><span id="th6">0.00</span></div>
+            </div>
+          </div>
+          <div class="bg-slate-900/80 p-2 rounded border border-slate-700/50">
+            <div class="text-[9px] text-slate-400 mb-1 text-center border-b border-slate-700 pb-1">End-Effector Twist \(\mathcal{V}_b\)</div>
+            <div class="data-grid text-emerald-400">
+              <div class="data-cell">\(\omega_x\) <br><span id="tw-wx">0.0</span></div>
+              <div class="data-cell">\(\omega_y\) <br><span id="tw-wy">0.0</span></div>
+              <div class="data-cell">\(\omega_z\) <br><span id="tw-wz">0.0</span></div>
+              <div class="data-cell">\(v_x\) <br><span id="tw-vx">0.0</span></div>
+              <div class="data-cell">\(v_y\) <br><span id="tw-vy">0.0</span></div>
+              <div class="data-cell">\(v_z\) <br><span id="tw-vz">0.0</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEREO CAMERAS (Top Right) -->
+  <div class="absolute top-4 right-4 z-20 flex flex-col gap-3">
+    <div class="cam-viewport" id="camA-viewport">
+      <div id="camA-label" class="absolute top-1 left-1 z-10 text-[9px] font-mono font-bold bg-black/75 px-1.5 rounded text-rose-400 border border-rose-500/40">CAM_A : LEFT ANGLE</div>
+      <div id="bbox-camA" class="yolo-bbox"><div class="yolo-tag">ball</div></div>
+    </div>
+    <div class="cam-viewport" id="camB-viewport">
+      <div id="camB-label" class="absolute top-1 left-1 z-10 text-[9px] font-mono font-bold bg-black/75 px-1.5 rounded text-blue-400 border border-blue-500/40">CAM_B : RIGHT ANGLE</div>
+      <div id="bbox-camB" class="yolo-bbox"><div class="yolo-tag">ball</div></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { DragControls } from 'three/addons/controls/DragControls.js';
+
+    let currentMode = 'LEGACY'; 
+    let ballState = "WAITING"; 
+    let robotMatchState = "WAITING_C1"; 
+    let mathHudVisible = false;
+    let robotHudVisible = false;
+    let target1 = new THREE.Vector3();
+    let target2 = new THREE.Vector3();
+
+    // --- SETUP SCENE & CAMERA ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0f1d);
+    scene.fog = new THREE.FogExp2(0x0a0f1d, 0.02);
+
+    const mainCamera = new THREE.PerspectiveCamera(48, window.innerWidth / window.innerHeight, 0.1, 100);
+    mainCamera.position.set(0, 8, 14);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    document.body.appendChild(renderer.domElement);
+
+    const orbit = new OrbitControls(mainCamera, renderer.domElement);
+    orbit.enableDamping = true;
+    orbit.maxPolarAngle = Math.PI / 2 - 0.02;
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    dirLight.position.set(5, 14, 8); dirLight.castShadow = true; scene.add(dirLight);
+
+    // --- TENNIS COURT ---
+    const courtWidth = 8, courtLength = 16;
+    const grass = new THREE.Mesh(new THREE.PlaneGeometry(13, 21), new THREE.MeshStandardMaterial({ color: 0x1e5622 }));
+    grass.rotation.x = -Math.PI / 2; grass.receiveShadow = true; scene.add(grass);
+
+    const courtField = new THREE.Mesh(new THREE.PlaneGeometry(courtWidth, courtLength), new THREE.MeshStandardMaterial({ color: 0x2e7d32, roughness: 0.8 }));
+    courtField.rotation.x = -Math.PI / 2; courtField.position.y = 0.002; courtField.receiveShadow = true; scene.add(courtField);
+
+    const lineMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const lineGroup = new THREE.Group(); lineGroup.position.y = 0.005; scene.add(lineGroup);
+    function createLine(w, h, x, z) {
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(w, h), lineMaterial);
+      mesh.rotation.x = -Math.PI / 2; mesh.position.set(x, 0, z); lineGroup.add(mesh);
+    }
+    createLine(0.07, 16, -4, 0); createLine(0.07, 16, 4, 0); 
+    createLine(0.07, 16, -3.1, 0); createLine(0.07, 16, 3.1, 0); 
+    createLine(8, 0.07, 0, -8); createLine(8, 0.07, 0, 8); 
+    createLine(6.2, 0.07, 0, -4.5); createLine(6.2, 0.07, 0, 4.5); 
+    createLine(0.07, 9, 0, 0); 
+
+    const netMesh = new THREE.Mesh(new THREE.PlaneGeometry(8, 0.95), new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.3, side: THREE.DoubleSide }));
+    netMesh.position.set(0, 0.475, 0); scene.add(netMesh);
+    const topTape = new THREE.Mesh(new THREE.BoxGeometry(8.2, 0.05, 0.05), new THREE.MeshStandardMaterial({ color: 0xffffff }));
+    topTape.position.set(0, 0.95, 0); scene.add(topTape);
+    const postMat = new THREE.MeshStandardMaterial({ color: 0x334155 });
+    const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 1.05, 16), postMat);
+    postL.position.set(-4.1, 0.525, 0); scene.add(postL);
+    const postR = postL.clone(); postR.position.set(4.1, 0.525, 0); scene.add(postR);
+
+    const gridHelper = new THREE.GridHelper(16, 32, 0x00f3ff, 0x00e5ff);
+    gridHelper.position.set(0, 0.02, 0); gridHelper.material.opacity = 0.28; gridHelper.material.transparent = true; scene.add(gridHelper);
+
+    // --- 6-DOF KINEMATIC ROBOT ARM ---
+    const robotGroup = new THREE.Group();
+    // Default position at baseline
+    robotGroup.position.set(0, 0, -6.5); 
+    scene.add(robotGroup);
+    
+    // Robot base path line (for visual context of its track)
+    const trackGeo = new THREE.PlaneGeometry(8, 0.4);
+    const trackMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.2 });
+    const trackMesh = new THREE.Mesh(trackGeo, trackMat);
+    trackMesh.rotation.x = -Math.PI / 2; trackMesh.position.set(0, 0.01, -6.5);
+    scene.add(trackMesh);
+
+    const matDark = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.5 });
+    const matBlue = new THREE.MeshStandardMaterial({ color: 0x0284c7, metalness: 0.2 });
+    const matJoint = new THREE.MeshStandardMaterial({ color: 0x64748b });
+
+    const rBase = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.5, 0.2, 32), matDark);
+    rBase.position.y = 0.1; robotGroup.add(rBase);
+    
+    const j1 = new THREE.Group(); j1.position.y = 0.2; rBase.add(j1);
+    const l1 = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.4), matBlue); l1.position.y = 0.2; j1.add(l1);
+    
+    const j2 = new THREE.Group(); j2.position.y = 0.4; j1.add(j2);
+    const j2Mesh = new THREE.Mesh(new THREE.SphereGeometry(0.25), matJoint); j2.add(j2Mesh);
+    const l2 = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.8), matDark); l2.position.y = 0.4; j2.add(l2);
+    
+    const j3 = new THREE.Group(); j3.position.y = 0.8; j2.add(j3);
+    const j3Mesh = new THREE.Mesh(new THREE.SphereGeometry(0.18), matJoint); j3.add(j3Mesh);
+    const l3 = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.6), matBlue); l3.position.y = 0.3; j3.add(l3);
+    
+    const j4 = new THREE.Group(); j4.position.y = 0.6; j3.add(j4);
+    
+    const j5 = new THREE.Group(); j4.add(j5);
+    const racket = new THREE.Mesh(new THREE.TorusGeometry(0.3, 0.04, 16, 32), new THREE.MeshStandardMaterial({ color: 0xef4444 }));
+    racket.position.set(0, 0.3, 0); j5.add(racket);
+    
+    const tcpAxes = new THREE.AxesHelper(0.6); racket.add(tcpAxes);
+
+    j2.rotation.x = Math.PI / 6;
+    j3.rotation.x = Math.PI / 4;
+    j5.rotation.x = -Math.PI / 4;
+
+    // Target position for Robot base to move towards
+    let robotTargetX = 0; 
+    let isRobotMoving = false;
+
+    // --- TENNIS BALL & AXES ---
+    const ballRadius = 0.15;
+    const ball = new THREE.Mesh(new THREE.SphereGeometry(ballRadius, 32, 32), new THREE.MeshStandardMaterial({ color: 0xccff00 }));
+    const defaultBallPos = new THREE.Vector3(0, 1.5, 7.5); 
+    ball.position.copy(defaultBallPos);
+    ball.castShadow = true; scene.add(ball);
+    
+    const ballAxesHelper = new THREE.AxesHelper(0.7); ball.add(ballAxesHelper);
+    const velocityArrow = new THREE.ArrowHelper(new THREE.Vector3(0,1,0), ball.position, 0.001, 0xfbbf24, 0.25, 0.15); scene.add(velocityArrow);
+    
+    const trajectoryMat = new THREE.LineDashedMaterial({ color: 0xff3366, dashSize: 0.2, gapSize: 0.1, linewidth: 2 });
+    const trajectoryGeo = new THREE.BufferGeometry();
+    const trajectoryLine = new THREE.Line(trajectoryGeo, trajectoryMat); scene.add(trajectoryLine);
+
+    // --- PHYSICAL STEREO CAMERAS & RAYCASTING LASERS ---
+    const camWidth = 260, camHeight = 195; 
+    const camA = new THREE.PerspectiveCamera(45, camWidth/camHeight, 0.1, 80); camA.position.set(-5.5, 2.8, 8.5);
+    const camAMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 0.5), new THREE.MeshStandardMaterial({ color: 0xf43f5e }));
+    camAMesh.position.copy(camA.position); scene.add(camAMesh);
+
+    const camB = new THREE.PerspectiveCamera(45, camWidth/camHeight, 0.1, 80); camB.position.set(5.5, 2.8, 8.5);
+    const camBMesh = new THREE.Mesh(new THREE.BoxGeometry(0.35, 0.3, 0.5), new THREE.MeshStandardMaterial({ color: 0x3b82f6 }));
+    camBMesh.position.copy(camB.position); scene.add(camBMesh);
+
+    const lineMatA = new THREE.LineBasicMaterial({ color: 0xf43f5e, linewidth: 1, transparent: true, opacity: 0.5 });
+    const lineGeoA = new THREE.BufferGeometry().setFromPoints([camA.position, ball.position]);
+    const rayLineA = new THREE.Line(lineGeoA, lineMatA); scene.add(rayLineA);
+    const lineMatB = new THREE.LineBasicMaterial({ color: 0x3b82f6, linewidth: 1, transparent: true, opacity: 0.5 });
+    const lineGeoB = new THREE.BufferGeometry().setFromPoints([camB.position, ball.position]);
+    const rayLineB = new THREE.Line(lineGeoB, lineMatB); scene.add(rayLineB);
+
+    const rendererA = new THREE.WebGLRenderer({ antialias: true }); rendererA.setSize(camWidth, camHeight);
+    const rendererB = new THREE.WebGLRenderer({ antialias: true }); rendererB.setSize(camWidth, camHeight);
+    document.getElementById('camA-viewport').appendChild(rendererA.domElement);
+    document.getElementById('camB-viewport').appendChild(rendererB.domElement);
+
+    // --- MARKERS FOR ROBOT MODE ---
+    const markerGeo = new THREE.RingGeometry(0.2, 0.3, 32); markerGeo.rotateX(-Math.PI/2);
+    const m1 = new THREE.Mesh(markerGeo, new THREE.MeshBasicMaterial({ color: 0x06b6d4, side: THREE.DoubleSide })); m1.position.y=0.01; scene.add(m1); m1.visible=false;
+    const m2 = new THREE.Mesh(markerGeo, new THREE.MeshBasicMaterial({ color: 0xec4899, side: THREE.DoubleSide })); m2.position.y=0.01; scene.add(m2); m2.visible=false;
+
+    // --- IMPACT MARKS ---
+    const marks = [];
+    function createImpactMark(x, z) {
+      const mark = new THREE.Mesh(new THREE.CircleGeometry(0.12, 16), new THREE.MeshBasicMaterial({ color: 0xef4444 }));
+      mark.rotation.x = -Math.PI / 2; mark.position.set(x, 0.01, z);
+      scene.add(mark); marks.push(mark);
+    }
+    document.getElementById('clear-marks').addEventListener('click', () => {
+      marks.forEach(m => scene.remove(m)); marks.length = 0; trajectoryGeo.setFromPoints([]);
+    });
+
+    // Reset function
+    window.addEventListener('keydown', (e) => {
+      if (e.code === 'Space') {
+        ball.position.copy(defaultBallPos);
+        ballVelocity.set(0,0,0);
+        isAutoFlying = false;
+        trajectoryGeo.setFromPoints([]);
+        
+        // Reset robot position smoothly
+        robotTargetX = 0; 
+
+        if(currentMode === 'REAL') {
+          ballState = "WAITING";
+          document.getElementById('throw-status').innerText = "Click on the 3D court to lock target!";
+          document.getElementById('throw-status').className = "text-amber-400";
+        } else if (currentMode === 'ROBOT') {
+          robotMatchState = "WAITING_C1";
+          m1.visible = false; m2.visible = false;
+          document.getElementById('throw-status').innerText = "Click 1: Select ball landing on Robot side!";
+          document.getElementById('throw-status').className = "text-cyan-400";
+        }
+      }
+    });
+
+    // --- MODE SWITCH LOGIC ---
+    const dragControls = new DragControls([ball], mainCamera, renderer.domElement);
+    const btnLegacy = document.getElementById('btn-mode-legacy');
+    const btnReal = document.getElementById('btn-mode-real');
+    const btnRobot = document.getElementById('btn-mode-robot');
+    let isAutoFlying = false, flyTime = 0, hasBounced = false, isDragging = false;
+    
+    btnLegacy.addEventListener('click', () => setMode('LEGACY'));
+    btnReal.addEventListener('click', () => setMode('REAL'));
+    btnRobot.addEventListener('click', () => setMode('ROBOT'));
+
+    function setMode(mode) {
+      currentMode = mode;
+      btnLegacy.className = 'switch-inactive'; btnReal.className = 'switch-inactive'; btnRobot.className = 'switch-inactive';
+      
+      document.getElementById('toggle-fly').classList.add('hidden');
+      document.getElementById('toggle-math-hud').classList.add('hidden');
+      document.getElementById('toggle-robot-hud').classList.add('hidden');
+      document.getElementById('yolo-sensor-ui').classList.add('hidden');
+      document.getElementById('math-hud-panel').classList.add('hidden');
+      document.getElementById('robot-hud-panel').classList.add('hidden');
+      
+      mathHudVisible = false; robotHudVisible = false;
+      trajectoryGeo.setFromPoints([]);
+      m1.visible = false; m2.visible = false;
+
+      camB.position.set(5.5, 2.8, 8.5);
+      document.getElementById('camB-label').innerText = "CAM_B : RIGHT ANGLE";
+
+      if (mode === 'LEGACY') {
+        btnLegacy.className = 'switch-active'; dragControls.enabled = true;
+        document.getElementById('toggle-fly').classList.remove('hidden');
+        isAutoFlying = false;
+        document.getElementById('instruction-text').innerHTML = `💡 <b>Test Mode</b>: Drag and drop the ball to observe coordinates. (Press SPACE to reset).`;
+      } 
+      else if (mode === 'REAL') {
+        btnReal.className = 'switch-active'; dragControls.enabled = false;
+        document.getElementById('toggle-math-hud').classList.remove('hidden');
+        document.getElementById('yolo-sensor-ui').classList.remove('hidden');
+        ballState = "WAITING"; ball.position.copy(defaultBallPos);
+        document.getElementById('instruction-text').innerHTML = `💡 <b>Real Match</b>: Click the court to place the ball. Swing an object through the YOLO Camera to launch.`;
+      }
+      else if (mode === 'ROBOT') {
+        btnRobot.className = 'switch-active'; dragControls.enabled = false;
+        document.getElementById('toggle-robot-hud').classList.remove('hidden');
+        document.getElementById('robot-hud-panel').classList.remove('hidden');
+        document.getElementById('yolo-sensor-ui').classList.remove('hidden');
+        robotHudVisible = true; robotMatchState = "WAITING_C1";
+        ball.position.copy(defaultBallPos);
+        
+        camB.position.set(0, 4, -10);
+        document.getElementById('camB-label').innerText = "CAM_ROBOT : TELEMETRY";
+        
+        document.getElementById('instruction-text').innerHTML = `💡 <b>Robot Match</b>: Click C1 (Receive) and C2 (Return). The Robot evaluates Lie Group kinematics and hits back.`;
+        document.getElementById('throw-status').innerText = "Click 1: Select ball landing on Robot side!";
+        document.getElementById('throw-status').className = "text-cyan-400";
+      }
+    }
+
+    document.getElementById('toggle-math-hud').addEventListener('click', () => {
+      mathHudVisible = !mathHudVisible; document.getElementById('math-hud-panel').classList.toggle('hidden', !mathHudVisible);
+    });
+    document.getElementById('toggle-robot-hud').addEventListener('click', () => {
+      robotHudVisible = !robotHudVisible; document.getElementById('robot-hud-panel').classList.toggle('hidden', !robotHudVisible);
+    });
+    document.getElementById('toggle-grid').addEventListener('click', () => gridHelper.visible = !gridHelper.visible);
+    dragControls.addEventListener('dragstart', () => { orbit.enabled = false; isDragging = true; isAutoFlying = false; });
+    dragControls.addEventListener('dragend', () => { orbit.enabled = true; isDragging = false; });
+
+    document.getElementById('toggle-fly').addEventListener('click', (e) => {
+      if(currentMode !== 'LEGACY') return;
+      isAutoFlying = !isAutoFlying; flyTime = 0; hasBounced = false;
+      e.target.innerText = isAutoFlying ? 'Stop Auto-Fly' : 'Toggle Auto-Fly Mode';
+    });
+
+    // --- PHYSICS, RAYCASTING & ROBOT LOGIC ---
+    const ballVelocity = new THREE.Vector3();
+    const spinVector = new THREE.Vector3();
+    const raycaster = new THREE.Raycaster();
+    const mouse = new THREE.Vector2();
+
+    window.addEventListener('click', (event) => {
+      if (event.clientX < 350) return; 
+      mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+      mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+      raycaster.setFromCamera(mouse, mainCamera);
+      const intersects = raycaster.intersectObject(courtField);
+      
+      if (intersects.length > 0) {
+        if (currentMode === 'REAL' && ballState !== "FLYING") {
+          target1.copy(intersects[0].point);
+          ballState = "READY";
+          document.getElementById('throw-status').innerText = "Target locked. Ready to YOLO throw!";
+          document.getElementById('throw-status').className = "text-emerald-400 font-bold";
+          createImpactMark(target1.x, target1.z); 
+        }
+        else if (currentMode === 'ROBOT') {
+          if (robotMatchState === "WAITING_C1") {
+             target1.copy(intersects[0].point);
+             if(target1.z > 0) target1.z = -2; 
+             
+             // Move Robot Base towards the X position of C1
+             robotTargetX = Math.max(-3, Math.min(3, target1.x));
+
+             m1.position.set(target1.x, 0.01, target1.z); m1.visible = true;
+             robotMatchState = "WAITING_C2";
+             document.getElementById('throw-status').innerText = "Click 2: Select return point on User side!";
+             document.getElementById('throw-status').className = "text-fuchsia-400";
+          } 
+          else if (robotMatchState === "WAITING_C2") {
+             target2.copy(intersects[0].point);
+             if(target2.z < 0) target2.z = 2; 
+             m2.position.set(target2.x, 0.01, target2.z); m2.visible = true;
+             robotMatchState = "READY";
+             document.getElementById('throw-status').innerText = "READY! Swing hand to launch.";
+             document.getElementById('throw-status').className = "text-emerald-400 font-bold animate-pulse";
+          }
+        }
+      }
+    });
+
+    // --- YOLO WEBSOCKET CONNECTION ---
+    const ws = new WebSocket('ws://localhost:8765');
+    ws.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      document.getElementById('sensor-indicator').className = data.detected ? "w-2 h-2 rounded-full bg-emerald-500" : "w-2 h-2 rounded-full bg-rose-600";
+      
+      const camSpeed = Math.sqrt(data.vx**2 + data.vy**2);
+      if (camSpeed > 1.0) {
+        if (currentMode === 'REAL' && ballState === "READY") {
+          ballState = "FLYING";
+          document.getElementById('throw-status').innerText = "BALL IS FLYING!";
+          const T = 0.8; 
+          ballVelocity.set((target1.x - ball.position.x)/T, 5.0, (target1.z - ball.position.z)/T);
+          spinVector.set(0, -data.vx * 0.15, data.vy * 0.25);
+        }
+        else if (currentMode === 'ROBOT' && robotMatchState === "READY") {
+          robotMatchState = "INCOMING_FLIGHT";
+          document.getElementById('throw-status').innerText = "INCOMING TO ROBOT!";
+          const T = 1.0; 
+          ballVelocity.set((target1.x - ball.position.x)/T, 4.5, (target1.z - ball.position.z)/T);
+          spinVector.set(0, 0, data.vy * 0.2);
+        }
+      }
+    };
+
+    // --- MAIN RENDER LOOP ---
+    const clock = new THREE.Clock();
+    const lastPos = new THREE.Vector3().copy(ball.position);
+    const measuredVelocity = new THREE.Vector3();
+    let swingProgress = 0;
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = Math.min(clock.getDelta(), 0.1);
+      
+      // Move Robot Base Smoothly Left or Right
+      if(robotGroup.position.x !== robotTargetX) {
+        robotGroup.position.x = THREE.MathUtils.lerp(robotGroup.position.x, robotTargetX, 0.08);
+      }
+
+      if (currentMode === 'ROBOT') {
+        if (robotMatchState === "INCOMING_FLIGHT") {
+           ballVelocity.y -= 9.81 * delta; ball.position.addScaledVector(ballVelocity, delta);
+           if (ball.position.y <= ballRadius) {
+             ball.position.y = ballRadius;
+             ballVelocity.y = Math.abs(ballVelocity.y) * 0.75; ballVelocity.x *= 0.8; ballVelocity.z *= 0.8;
+             robotMatchState = "WAITING_ROBOT_HIT";
+           }
+        } 
+        else if (robotMatchState === "WAITING_ROBOT_HIT") {
+           ballVelocity.y -= 9.81 * delta; ball.position.addScaledVector(ballVelocity, delta);
+           j1.rotation.y = THREE.MathUtils.lerp(j1.rotation.y, Math.atan2(ball.position.x - robotGroup.position.x, ball.position.z - robotGroup.position.z), 0.1);
+           
+           if (ball.position.z < -4.0 || ballVelocity.z > 0) {
+             robotMatchState = "ROBOT_SWINGING";
+             swingProgress = 0;
+             document.getElementById('throw-status').innerText = "ROBOT RETURNING!";
+             document.getElementById('throw-status').className = "text-rose-500 font-bold";
+             const T = 0.8;
+             ballVelocity.set((target2.x - ball.position.x)/T, 5.0, (target2.z - ball.position.z)/T);
+             spinVector.set(0, 0, 5.0); 
+           }
+        }
+        else if (robotMatchState === "ROBOT_SWINGING") {
+           ballVelocity.y -= 9.81 * delta; ballVelocity.y -= spinVector.z * delta; 
+           ball.position.addScaledVector(ballVelocity, delta);
+           
+           swingProgress += delta * 8;
+           if(swingProgress < Math.PI) {
+             j2.rotation.x = Math.PI / 6 - Math.sin(swingProgress) * 0.5;
+             j3.rotation.x = Math.PI / 4 + Math.sin(swingProgress) * 0.8;
+             j5.rotation.x = -Math.PI / 4 - Math.sin(swingProgress) * 1.5;
+           } else {
+             j2.rotation.x = THREE.MathUtils.lerp(j2.rotation.x, Math.PI / 6, 0.05);
+             j3.rotation.x = THREE.MathUtils.lerp(j3.rotation.x, Math.PI / 4, 0.05);
+             j5.rotation.x = THREE.MathUtils.lerp(j5.rotation.x, -Math.PI / 4, 0.05);
+           }
+           
+           if (ball.position.y <= ballRadius && ball.position.z > 0) {
+             ball.position.y = ballRadius;
+             ballVelocity.y = Math.abs(ballVelocity.y) * 0.75; ballVelocity.x *= 0.8; ballVelocity.z *= 0.8;
+             robotMatchState = "WAITING_END";
+           }
+        }
+        else if (robotMatchState === "WAITING_END") {
+           ballVelocity.y -= 9.81 * delta; ball.position.addScaledVector(ballVelocity, delta);
+           if (ball.position.y <= ballRadius) { ball.position.y = ballRadius; ballVelocity.y *= 0.75; ballVelocity.x *= 0.8; ballVelocity.z*= 0.8; }
+        }
+
+        if(robotHudVisible) {
+          document.getElementById('th1').innerText = j1.rotation.y.toFixed(2);
+          document.getElementById('th2').innerText = j2.rotation.x.toFixed(2);
+          document.getElementById('th3').innerText = j3.rotation.x.toFixed(2);
+          document.getElementById('th5').innerText = j5.rotation.x.toFixed(2);
+          
+          if(robotMatchState === "ROBOT_SWINGING" && swingProgress < Math.PI) {
+            document.getElementById('tw-wx').innerText = (Math.cos(swingProgress)*3.2).toFixed(1);
+            document.getElementById('tw-vy').innerText = (Math.sin(swingProgress)*5.5).toFixed(1);
+            document.getElementById('tw-vz').innerText = (Math.cos(swingProgress)*8.1).toFixed(1);
+          } else {
+            document.getElementById('tw-wx').innerText = "0.0";
+            document.getElementById('tw-vy').innerText = "0.0";
+            document.getElementById('tw-vz').innerText = "0.0";
+          }
+        }
+      }
+      else if (currentMode === 'LEGACY') {
+        if (isAutoFlying) {
+          flyTime += delta * 1.4; let p = (flyTime * 0.7) % 2; if (p > 1) p = 2 - p;
+          if (p < 0.05 || p > 0.95) hasBounced = false;
+          let nx = THREE.MathUtils.lerp(-2.8, 2.8, p); let nz = THREE.MathUtils.lerp(6.2, -6.2, p); let ny = 3.2 - 11.5 * Math.pow(p - 0.5, 2);
+          if (ny <= ballRadius + 0.05) { ny = ballRadius; if (!hasBounced) { createImpactMark(nx, nz); hasBounced = true; } }
+          ball.position.set(nx, ny, nz);
+        }
+      } 
+      else if (currentMode === 'REAL' && ballState === "FLYING") {
+        ballVelocity.y -= 9.81 * delta; ballVelocity.y -= spinVector.z * delta; ballVelocity.x += spinVector.y * delta;
+        ball.position.addScaledVector(ballVelocity, delta);
+        if (ball.position.y <= ballRadius) {
+          ball.position.y = ballRadius; createImpactMark(ball.position.x, ball.position.z);
+          ballVelocity.y = Math.abs(ballVelocity.y) * 0.75; ballVelocity.x *= 0.8; ballVelocity.z *= 0.8; spinVector.multiplyScalar(0.3);
+          if (ballVelocity.length() < 0.6) {
+            ballState = "WAITING"; document.getElementById('throw-status').innerText = "Press SPACE to reset ball!";
+          }
+        }
+      }
+      
+      if (delta > 0.0001) measuredVelocity.subVectors(ball.position, lastPos).divideScalar(delta);
+      const speed = measuredVelocity.length(); lastPos.copy(ball.position);
+      if (speed > 0.1) {
+        velocityArrow.position.copy(ball.position); velocityArrow.setDirection(measuredVelocity.clone().normalize());
+        const len = Math.min(2, Math.max(0.4, speed * 0.12)); velocityArrow.setLength(len, len*0.3, len*0.2); velocityArrow.visible = true;
+      } else velocityArrow.visible = false;
+
+      camA.lookAt(ball.position); camAMesh.lookAt(ball.position);
+      if(currentMode !== 'ROBOT') {
+        camB.lookAt(ball.position); camBMesh.lookAt(ball.position);
+      } else {
+        camB.lookAt(racket.getWorldPosition(new THREE.Vector3()));
+      }
+      
+      rayLineA.geometry.attributes.position.setXYZ(1, ball.position.x, ball.position.y, ball.position.z); rayLineA.geometry.attributes.position.needsUpdate = true;
+      rayLineB.geometry.attributes.position.setXYZ(1, ball.position.x, ball.position.y, ball.position.z); rayLineB.geometry.attributes.position.needsUpdate = true;
+
+      ['camA', 'camB'].forEach(id => {
+        const cam = id === 'camA' ? camA : camB, el = document.getElementById(`bbox-${id}`);
+        const pos = ball.position.clone().project(cam);
+        if (pos.z < 1 && pos.x >= -1.2 && pos.x <= 1.2 && pos.y >= -1.2 && pos.y <= 1.2) {
+          el.style.display = 'block'; el.style.left = `${(pos.x * 0.5 + 0.5) * 260}px`; el.style.top = `${(-pos.y * 0.5 + 0.5) * 195}px`;
+        } else el.style.display = 'none';
+      });
+
+      document.getElementById('pos-x').innerText = ball.position.x.toFixed(2);
+      document.getElementById('pos-y').innerText = ball.position.y.toFixed(2);
+      document.getElementById('pos-z').innerText = ball.position.z.toFixed(2);
+      document.getElementById('speed-val').innerText = (speed > 90 ? 0 : speed).toFixed(1);
+
+      orbit.update(); renderer.render(scene, mainCamera); rendererA.render(scene, camA); rendererB.render(scene, camB);
+    }
+    animate();
+    
+    window.addEventListener('resize', () => { 
+        mainCamera.aspect = window.innerWidth / window.innerHeight; mainCamera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); 
+    });
+  </script>
+</body>
+</html>
